@@ -3,8 +3,10 @@ import socket
 import asyncio
 import pytz
 import sqlite3
+import os
+import bisect
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
 from ipwhois import IPWhois
 from loguru import logger
 from models import IPResponse, ConnectionInfo, FlagInfo, TimezoneInfo
@@ -12,32 +14,45 @@ from country_data import COUNTRY_ENRICHMENT
 
 CITY_DB_PATH = "db/city_geolocation.db"
 
-def get_ip_metadata(ip_address: str):
-    addr = ipaddress.ip_address(ip_address)
-    return "IPv4" if addr.version == 4 else "IPv6"
+_city_index: List[Tuple[int, int, dict]] = []
+_city_starts: List[int] = []
 
-def get_city_data(ip_address: str) -> Optional[dict]:
+def load_city_database():
+    global _city_index, _city_starts
     try:
-        ip_int = int(ipaddress.IPv4Address(ip_address))
-        import os
         base_dir = os.path.dirname(os.path.abspath(__file__))
         db_abs_path = os.path.join(base_dir, CITY_DB_PATH)
-        
+        if not os.path.exists(db_abs_path):
+            logger.warning("City database not found.")
+            return
+
         conn = sqlite3.connect(db_abs_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT country_code, region, city, latitude, longitude FROM ip_ranges WHERE start_ip_int <= ? AND end_ip_int >= ? LIMIT 1", (ip_int, ip_int))
-        row = cursor.fetchone()
+        cursor.execute("SELECT start_ip_int, end_ip_int, country_code, region, city, latitude, longitude FROM ip_ranges ORDER BY start_ip_int")
+        rows = cursor.fetchall()
+        
+        _city_index = [(r[0], r[1], {"country_code": r[2], "region": r[3], "city": r[4], "latitude": r[5], "longitude": r[6]}) for r in rows]
+        _city_starts = [r[0] for r in _city_index]
         conn.close()
-        if row:
-            return {
-                "country_code": row[0],
-                "region": row[1],
-                "city": row[2],
-                "latitude": row[3],
-                "longitude": row[4]
-            }
+        logger.info(f"Loaded {len(_city_index)} prefix ranges into memory.")
     except Exception as e:
-        logger.error(f"Error fetching city data for {ip_address}: {e}")
+        logger.error(f"Failed to load city database: {e}")
+
+def get_ip_metadata(ip_address: str):
+    return "IPv6" if ":" in ip_address else "IPv4"
+
+def get_city_data(ip_address: str) -> Optional[dict]:
+    if ":" in ip_address or not _city_index:
+        return None
+    try:
+        ip_int = int(ipaddress.IPv4Address(ip_address))
+        idx = bisect.bisect_right(_city_starts, ip_int) - 1
+        if idx >= 0:
+            start, end, data = _city_index[idx]
+            if start <= ip_int <= end:
+                return data
+    except Exception as e:
+        logger.error(f"Error in memory lookup: {e}")
     return None
 
 def generate_flag_data(country_code: str) -> Dict[str, str]:
@@ -59,6 +74,23 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
         country_code = results.get('asn_country_code')
         asn_desc = results.get('asn_description', "")
         
+        postal = None
+        if results.get('objects'):
+            for obj_key, obj_val in results['objects'].items():
+                contact = obj_val.get('contact', {})
+                address = contact.get('address', [])
+                for addr in address:
+                    val = addr.get('value', '')
+                    if val:
+                        parts = val.split('\n')
+                        for part in parts:
+                            cleaned = part.strip()
+                            if cleaned.isdigit() and len(cleaned) >= 5:
+                                postal = cleaned
+                                break
+                    if postal: break
+                if postal: break
+
         asn_raw = results.get('asn')
         asn_clean = None
         if asn_raw:
@@ -92,6 +124,7 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             city=city_data['city'] if city_data else None,
             latitude=city_data['latitude'] if city_data else None,
             longitude=city_data['longitude'] if city_data else None,
+            postal=postal,
             connection=ConnectionInfo(
                 asn=asn_clean,
                 org=asn_desc,

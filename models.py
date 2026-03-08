@@ -23,20 +23,11 @@ class TimezoneInfo(BaseModel):
 class IPResponse(BaseModel):
     ip: str
     success: bool
-    type: str # IPv4 or IPv6
+    type: str
     prefix: Optional[str] = None
     continent: Optional[str] = None
     continent_code: Optional[str] = None
     country: Optional[str] = None
-    country_code: Optional[str] = None
-    region: Optional[str] = None
-    city: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    flag: Optional[FlagInfo] = None
-    connection: Optional[ConnectionInfo] = None
-    timezone: Optional[TimezoneInfo] = None
-    last_updated: Optional[str] = None
     country_code: Optional[str] = None
     region: Optional[str] = None
     city: Optional[str] = None

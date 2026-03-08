@@ -82,3 +82,10 @@ async def get_prefixes_by_asn(asn: int) -> list:
     async with _db_pool.execute("SELECT prefix FROM asn_prefix_map WHERE asn = ?", (asn,)) as cursor:
         rows = await cursor.fetchall()
         return [row['prefix'] for row in rows]
+
+async def get_all_cached_prefixes() -> list:
+    if _db_pool is None:
+        await init_db()
+    async with _db_pool.execute("SELECT prefix FROM prefix_cache") as cursor:
+        rows = await cursor.fetchall()
+        return [row['prefix'] for row in rows]

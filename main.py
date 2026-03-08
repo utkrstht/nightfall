@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 import ipaddress
 import asyncio
 import random
@@ -7,8 +8,10 @@ from loguru import logger
 from cachetools import TTLCache
 
 from models import IPResponse
-from database import init_db, get_cached_data_by_ip, upsert_prefix_cache, get_cached_data_by_prefix, get_prefixes_by_asn
-from engine import fetch_live_data, get_ip_metadata
+from database import init_db, get_cached_data_by_ip, upsert_prefix_cache, get_cached_data_by_prefix, get_prefixes_by_asn, get_all_cached_prefixes
+from engine import fetch_live_data, get_ip_metadata, load_city_database
+
+import os
 
 CRAWLER_DELAY = 1.0 
 LRU_CACHE_SIZE = 50000
@@ -25,6 +28,19 @@ app = FastAPI(
     version="2.0.0"
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+@app.get("/v1/bulk")
+async def bulk_lookup(ips: str):
+    ip_list = [ip.strip() for ip in ips.split(",")][:50]
+    results = []
+    for ip in ip_list:
+        try:
+            results.append(await get_ip_info(ip))
+        except:
+            results.append({"ip": ip, "success": False})
+    return results
+
 async def database_crawler():
     await asyncio.sleep(5)
     logger.info("Background crawler initialized.")
@@ -32,9 +48,24 @@ async def database_crawler():
 
     while True:
         try:
-            major_blocks = [8, 23, 31, 45, 103, 113, 172, 185, 192, 203] 
-            o1 = random.choice(major_blocks)
-            target_ip = f"{o1}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
+            target_ip = None
+            prefixes = await get_all_cached_prefixes()
+            
+            if prefixes and random.random() < 0.7:
+                prefix = random.choice(prefixes)
+                try:
+                    net = ipaddress.ip_network(prefix, strict=False)
+                    if net.version == 4:
+                        hosts = list(net.hosts())
+                        if hosts:
+                            target_ip = str(random.choice(hosts))
+                except:
+                    pass
+            
+            if not target_ip:
+                major_blocks = [8, 23, 31, 45, 103, 113, 172, 185, 192, 203] 
+                o1 = random.choice(major_blocks)
+                target_ip = f"{o1}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
             
             cached = await get_cached_data_by_ip(target_ip)
             if not cached:
@@ -114,7 +145,9 @@ async def get_asn_info(asn: int):
 
 @app.on_event("startup")
 async def startup():
+    os.makedirs("db", exist_ok=True)
     await init_db()
+    load_city_database()
     asyncio.create_task(database_crawler())
 
 if __name__ == "__main__":
