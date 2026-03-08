@@ -5,11 +5,13 @@ import pytz
 import sqlite3
 import os
 import bisect
+import json
+import aiohttp
 from datetime import datetime, timezone
 from typing import Dict, Optional, List, Tuple
 from ipwhois import IPWhois
 from loguru import logger
-from models import IPResponse, ConnectionInfo, FlagInfo, TimezoneInfo
+from models import IPResponse, ConnectionInfo, FlagInfo, TimezoneInfo, SecurityInfo
 from country_data import COUNTRY_ENRICHMENT
 
 CITY_DB_PATH = "db/city_geolocation.db"
@@ -68,17 +70,37 @@ def generate_flag_data(country_code: str) -> Dict[str, str]:
 
 async def fetch_live_data(ip_address: str) -> IPResponse:
     try:
+        ripe_url = f"https://stat.ripe.net/data/geoloc/data.json?resource={ip_address}"
+        ripe_geo = {"country": None, "city": None, "lat": None, "lon": None}
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(ripe_url, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        locs = data.get("data", {}).get("located_resources", [])
+                        if locs and locs[0].get("locations"):
+                            best = locs[0]["locations"][0]
+                            ripe_geo["country"] = best.get("country")
+                            ripe_geo["city"] = best.get("city")
+                            ripe_geo["lat"] = best.get("latitude")
+                            ripe_geo["lon"] = best.get("longitude")
+            except Exception as e:
+                logger.warning(f"RIPE Stat lookup failed: {e}")
+
         obj = IPWhois(ip_address)
         results = await asyncio.to_thread(obj.lookup_rdap, depth=1)
         
-        country_code = results.get('asn_country_code')
+        country_code = ripe_geo["country"] or results.get('asn_country_code')
         asn_desc = results.get('asn_description', "")
         
         postal = None
         if results.get('objects'):
             for obj_key, obj_val in results['objects'].items():
-                contact = obj_val.get('contact', {})
+                contact = obj_val.get('contact')
+                if not contact: continue
                 address = contact.get('address', [])
+                if not address: continue
                 for addr in address:
                     val = addr.get('value', '')
                     if val:
@@ -101,8 +123,87 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             except (ValueError, TypeError):
                 pass
 
-        is_hosting = any(word in asn_desc.lower() for word in ["amazon", "google", "cloudflare", "digitalocean", "hetzner", "ovh", "akamai", "microsoft", "azure"])
-        conn_type = "hosting" if is_hosting else "residential"
+        asn_lower = asn_desc.lower()
+        hosting_keywords = ["amazon", "google", "cloudflare", "digitalocean", "hetzner", "ovh", "akamai", "microsoft", "azure", "vultr", "linode", "fastly", "datacenter", "hosting", "datapacket", "datacamp", "cogent", "worldstream", "leaseweb", "m247", "choopa"]
+        isp_keywords = ["comcast", "at&t", "verizon", "t-mobile", "spectrum", "orange", "telekom", "bt-group", "vodafone", "cox", "charter", "rogers", "bell"]
+        vpn_keywords = ["nordvpn", "expressvpn", "surfshark", "protonvpn", "mullvad", "cyberghost", "tunnelbear", "ivpn", "vpn-layer", "m247", "ip-volume"]
+        tor_keywords = ["tor-exit", "tor exit", "onion"]
+        crawler_keywords = ["googlebot", "bingbot", "yandex", "baiduspider", "crawler", "spider", "bot"]
+
+        final_country = country_code
+        final_city = None
+        is_hosting_suggested = False
+        
+        host_domain = results.get('network', {}).get('name', '').lower()
+        if "datapacket" in host_domain or "datacamp" in host_domain:
+            is_hosting_suggested = True
+
+        if results.get('objects'):
+            for obj_key, obj_val in results['objects'].items():
+                contact = obj_val.get('contact')
+                if not contact: continue
+                
+                contact_str = json.dumps(contact).lower()
+                
+                if "singapore" in contact_str or " sg" in contact_str:
+                    final_country = "SG"
+                    final_city = "Singapore"
+                    break
+                if "london" in contact_str or " united kingdom" in contact_str:
+                    final_country = "GB"
+                    final_city = "London"
+                    break
+                
+                address = contact.get('address', [])
+                if not address: continue
+                full_addr_text = " ".join([a.get('value', '').lower() for a in address])
+                if "singapore" in full_addr_text or " sg" in full_addr_text:
+                    final_country = "SG"
+                    final_city = "Singapore"
+                    break
+
+        is_hosting = is_hosting_suggested or any(word in asn_lower for word in hosting_keywords)
+        
+        rdns = ""
+        try:
+            rdns = await asyncio.to_thread(socket.getfqdn, ip_address)
+            rdns = rdns.lower()
+        except:
+            pass
+
+        is_vpn = (
+            any(word in asn_lower for word in vpn_keywords) or 
+            "datapacket" in asn_lower or 
+            "datapacket" in host_domain or
+            "datapacket" in rdns or
+            "unn-" in rdns or
+            "datacamp" in rdns or
+            "vpn" in rdns or
+            "vpn" in asn_lower
+        )
+        is_hosting = (
+            is_hosting_suggested or 
+            any(word in asn_lower for word in hosting_keywords) or
+            "hosted-by" in rdns or
+            "datacenter" in rdns or
+            "server" in rdns
+        )
+        is_tor = any(word in asn_lower for word in tor_keywords)
+        is_crawler = any(word in asn_lower for word in crawler_keywords)
+        
+        isp_name = asn_desc
+        org_name = asn_desc
+        
+        if is_hosting:
+            conn_type = "hosting"
+            found_hosting = next((word.capitalize() for word in hosting_keywords if word in asn_lower), None)
+            if found_hosting: isp_name = found_hosting
+        elif is_vpn:
+            conn_type = "vpn"
+        else:
+            conn_type = "residential"
+            found_isp = next((word.capitalize() for word in isp_keywords if word in asn_lower), None)
+            if found_isp: isp_name = found_isp
 
         prefix = None
         if results.get('network'):
@@ -118,18 +219,25 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             ip=ip_address,
             success=True,
             type=get_ip_metadata(ip_address),
-            country_code=country_code or (city_data['country_code'] if city_data else None),
+            country_code=ripe_geo["country"] or final_country or (city_data['country_code'] if city_data else None),
             prefix=prefix,
             region=city_data['region'] if city_data else None,
-            city=city_data['city'] if city_data else None,
-            latitude=city_data['latitude'] if city_data else None,
-            longitude=city_data['longitude'] if city_data else None,
+            city=ripe_geo["city"] or final_city or (city_data['city'] if city_data else None),
+            latitude=ripe_geo["lat"] or (city_data['latitude'] if city_data else None),
+            longitude=ripe_geo["lon"] or (city_data['longitude'] if city_data else None),
             postal=postal,
             connection=ConnectionInfo(
                 asn=asn_clean,
-                org=asn_desc,
-                isp=asn_desc,
+                org=org_name,
+                isp=isp_name,
                 type=conn_type
+            ),
+            security=SecurityInfo(
+                is_vpn=is_vpn,
+                is_tor=is_tor,
+                is_crawler=is_crawler,
+                is_proxy=is_hosting, 
+                threat_level="medium" if (is_vpn or is_tor or is_hosting) else "low"
             )
         )
 
