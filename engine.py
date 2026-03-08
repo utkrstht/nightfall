@@ -19,15 +19,12 @@ def get_ip_metadata(ip_address: str):
 def get_city_data(ip_address: str) -> Optional[dict]:
     try:
         ip_int = int(ipaddress.IPv4Address(ip_address))
-        # Use an absolute path or ensure the working directory is correct
         import os
         base_dir = os.path.dirname(os.path.abspath(__file__))
         db_abs_path = os.path.join(base_dir, CITY_DB_PATH)
         
         conn = sqlite3.connect(db_abs_path)
         cursor = conn.cursor()
-        # Adjusted result mapping based on the table schema (7 columns)
-        # Schema: start_ip_int, end_ip_int, country_code, region, city, latitude, longitude
         cursor.execute("SELECT country_code, region, city, latitude, longitude FROM ip_ranges WHERE start_ip_int <= ? AND end_ip_int >= ? LIMIT 1", (ip_int, ip_int))
         row = cursor.fetchone()
         conn.close()
@@ -57,7 +54,7 @@ def generate_flag_data(country_code: str) -> Dict[str, str]:
 async def fetch_live_data(ip_address: str) -> IPResponse:
     try:
         obj = IPWhois(ip_address)
-        results = obj.lookup_rdap(depth=1)
+        results = await asyncio.to_thread(obj.lookup_rdap, depth=1)
         
         country_code = results.get('asn_country_code')
         asn_desc = results.get('asn_description', "")
@@ -79,7 +76,6 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
         if results.get('network'):
             prefix = results['network'].get('cidr')
 
-        # Attempt to get local city-level data
         city_data = None
         try:
             city_data = await asyncio.to_thread(get_city_data, ip_address)
@@ -109,7 +105,6 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             enrich = COUNTRY_ENRICHMENT[country_code].copy()
             coords = enrich.pop("lat_lng", None)
             
-            # Use country center only if city-level coordinates are missing
             if coords and response.latitude is None:
                 response.latitude, response.longitude = coords[0], coords[1]
             
@@ -135,7 +130,10 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             except: pass
 
         try:
-            hostname, _, _ = await asyncio.to_thread(socket.gethostbyaddr, ip_address)
+            hostname, _, _ = await asyncio.wait_for(
+                asyncio.to_thread(socket.gethostbyaddr, ip_address),
+                timeout=2.0
+            )
             response.connection.domain = hostname
         except: pass
 
