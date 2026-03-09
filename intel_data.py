@@ -53,9 +53,16 @@ MOBILE_KEYWORDS = [
     "ran", "c-ran", "v-ran", "packet-core", "mme", "sgw", "pgw", "upf", "amf", "smf", "ausf", "udm", "nrf", "nssf"
 ]
 
+BOGON_RANGES = [
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "100.64.0.0/10", "169.254.0.0/16", "127.0.0.1/32",
+    "224.0.0.0/4", "240.0.0.0/4", "::1/128", "fc00::/7"
+]
+
 RDNS_PROXY_INDICATORS = [
     "proxy", "vpn", "vps", "hosting", "server", "datacenter", "colo", "cloud", "dedicated", "compute", "node", 
     "exit", "relay", "tor", "unn-", "hosted-by", "ptr", "dynamic", "static", "cust", "dialup", "pool", "bras", 
     "dsl", "cable", "fiber", "ftth", "fttp", "fttc", "nodes", "bridges", "gateways", "outbound", "inbound", 
     "traffic", "filter", "scrubbing", "anti-ddos", "cdn", "edge-node", "cache", "pop"
 ]
+

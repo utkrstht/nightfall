@@ -12,6 +12,7 @@ class ConnectionInfo(BaseModel):
     isp: Optional[str] = None
     type: Optional[str] = "residential"
     domain: Optional[str] = None
+    abuse_email: Optional[str] = None
 
 class SecurityInfo(BaseModel):
     is_vpn: bool = False
@@ -19,7 +20,13 @@ class SecurityInfo(BaseModel):
     is_crawler: bool = False
     is_proxy: bool = False
     is_mobile: bool = False
+    is_hosting: bool = False
+    is_bogon: bool = False
+    is_discrepancy: bool = False
+    threat_score: int = 0
     threat_level: str = "low"
+    abuse_email: Optional[str] = None
+    fingerprint: Optional[str] = None
 
 class TimezoneInfo(BaseModel):
     id: str

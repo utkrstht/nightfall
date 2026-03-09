@@ -13,9 +13,11 @@ from ipwhois import IPWhois
 from loguru import logger
 from models import IPResponse, ConnectionInfo, FlagInfo, TimezoneInfo, SecurityInfo
 from country_data import COUNTRY_ENRICHMENT
+from reputation_data import get_asn_trust_score
 from intel_data import (
     VPN_KEYWORDS, HOSTING_KEYWORDS, CRAWLER_KEYWORDS, 
-    PROXY_NETWORKS, MOBILE_KEYWORDS, RDNS_PROXY_INDICATORS
+    PROXY_NETWORKS, MOBILE_KEYWORDS, RDNS_PROXY_INDICATORS,
+    BOGON_RANGES
 )
 
 CITY_DB_PATH = "db/city_geolocation.db"
@@ -72,7 +74,26 @@ def generate_flag_data(country_code: str) -> Dict[str, str]:
         "emoji_unicode": unicode_str
     }
 
-async def fetch_live_data(ip_address: str) -> IPResponse:
+async def fetch_live_data(ip_address: str, hints: Optional[Dict[str, str]] = None) -> IPResponse:
+    try:
+        ip_obj = ipaddress.ip_address(ip_address)
+        for bogon in BOGON_RANGES:
+            if ip_obj in ipaddress.ip_network(bogon):
+                return IPResponse(
+                    ip=ip_address,
+                    success=True,
+                    type=get_ip_metadata(ip_address),
+                    country_code="LO",
+                    city="Localhost",
+                    security=SecurityInfo(
+                        is_vpn=False, is_proxy=False, is_tor=False,
+                        is_hosting=False, is_mobile=False, is_crawler=False,
+                        is_bogon=True, threat_score=0
+                    )
+                )
+    except:
+        pass
+
     try:
         ripe_url = f"https://stat.ripe.net/data/geoloc/data.json?resource={ip_address}"
         ripe_geo = {"country": None, "city": None, "lat": None, "lon": None}
@@ -116,6 +137,15 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
                                 break
                     if postal: break
                 if postal: break
+
+        abuse_email = None
+        if results.get('objects'):
+            for o_key, o_val in results['objects'].items():
+                contact = o_val.get('contact', {})
+                emails = contact.get('email', [])
+                if emails:
+                    abuse_email = emails[0].get('value')
+                    break
 
         asn_raw = results.get('asn')
         asn_clean = None
@@ -174,15 +204,27 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
         is_vpn = (
             any(word in asn_lower for word in VPN_KEYWORDS) or 
             any(word in host_domain for word in ["vpn", "proxy"] + VPN_KEYWORDS) or
-            any(word in rdns for word in ["vpn", "proxy", "unn-", "exit-node"] + VPN_KEYWORDS)
+            any(word in rdns for word in ["vpn", "proxy", "unn-", "exit-node", "tunnel", "vps-", "node-", "relay-"] + VPN_KEYWORDS)
         )
         is_hosting = (
             is_hosting or 
-            any(word in rdns for word in HOSTING_KEYWORDS + RDNS_PROXY_INDICATORS)
+            any(word in rdns for word in HOSTING_KEYWORDS + RDNS_PROXY_INDICATORS + ["server-", "pool-", "static-"])
         )
         is_tor = any(word in asn_lower or word in rdns for word in ["tor-exit", "tor exit", "onion", "torproject"])
         is_crawler = any(word in asn_lower or word in rdns for word in CRAWLER_KEYWORDS)
         
+        is_discrepancy = False
+        if hints:
+            langs = hints.get("languages", "").lower()
+            if langs and final_country:
+                country_code_lower = final_country.lower()
+                if country_code_lower not in langs and any(c in "abcdefghijklmnopqrstuvwxyz" for c in langs[:2]):
+                    is_discrepancy = True
+            
+            ua = hints.get("user_agent", "").lower()
+            if any(bot in ua for bot in ["curl", "python", "go-http", "wget", "headless"]):
+                is_crawler = True
+
         isp_name = asn_desc
         org_name = asn_desc
         
@@ -209,6 +251,14 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
         except:
             pass
 
+        # Final Trust Score calculation (weighted factors)
+        raw_trust = get_asn_trust_score(asn_clean or 0, is_vpn, is_hosting)
+        if is_tor: raw_trust += 30
+        if is_discrepancy: raw_trust += 15
+        if is_crawler: raw_trust += 10
+        
+        final_threat_score = min(max(raw_trust, 0), 100)
+
         response = IPResponse(
             ip=ip_address,
             success=True,
@@ -228,11 +278,16 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             ),
             security=SecurityInfo(
                 is_vpn=is_vpn,
+                is_proxy=is_hosting,
                 is_tor=is_tor,
-                is_crawler=is_crawler,
-                is_proxy=is_hosting, 
+                is_hosting=is_hosting,
                 is_mobile=is_mobile,
-                threat_level="high" if (is_tor or is_vpn) else "medium" if is_hosting else "low"
+                is_crawler=is_crawler,
+                is_bogon=False,
+                is_discrepancy=is_discrepancy,
+                abuse_email=abuse_email,
+                threat_score=final_threat_score,
+                threat_level="high" if final_threat_score > 70 else "medium" if final_threat_score > 30 else "low"
             )
         )
 
