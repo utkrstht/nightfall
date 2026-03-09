@@ -13,6 +13,10 @@ from ipwhois import IPWhois
 from loguru import logger
 from models import IPResponse, ConnectionInfo, FlagInfo, TimezoneInfo, SecurityInfo
 from country_data import COUNTRY_ENRICHMENT
+from intel_data import (
+    VPN_KEYWORDS, HOSTING_KEYWORDS, CRAWLER_KEYWORDS, 
+    PROXY_NETWORKS, MOBILE_KEYWORDS, RDNS_PROXY_INDICATORS
+)
 
 CITY_DB_PATH = "db/city_geolocation.db"
 
@@ -122,20 +126,16 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
                     asn_clean = int(asn_str)
             except (ValueError, TypeError):
                 pass
-
+        
         asn_lower = asn_desc.lower()
-        hosting_keywords = ["amazon", "google", "cloudflare", "digitalocean", "hetzner", "ovh", "akamai", "microsoft", "azure", "vultr", "linode", "fastly", "datacenter", "hosting", "datapacket", "datacamp", "cogent", "worldstream", "leaseweb", "m247", "choopa"]
-        isp_keywords = ["comcast", "at&t", "verizon", "t-mobile", "spectrum", "orange", "telekom", "bt-group", "vodafone", "cox", "charter", "rogers", "bell"]
-        vpn_keywords = ["nordvpn", "expressvpn", "surfshark", "protonvpn", "mullvad", "cyberghost", "tunnelbear", "ivpn", "vpn-layer", "m247", "ip-volume"]
-        tor_keywords = ["tor-exit", "tor exit", "onion"]
-        crawler_keywords = ["googlebot", "bingbot", "yandex", "baiduspider", "crawler", "spider", "bot"]
 
         final_country = country_code
         final_city = None
         is_hosting_suggested = False
+        is_mobile = any(word in asn_lower for word in MOBILE_KEYWORDS)
         
         host_domain = results.get('network', {}).get('name', '').lower()
-        if "datapacket" in host_domain or "datacamp" in host_domain:
+        if any(word in host_domain for word in ["datapacket", "datacamp", "oxylabs", "brightdata", "smartproxy", "iproyal", "soax", "luminati", "packetstream", "stormproxies", "geosurf", "netnut"]):
             is_hosting_suggested = True
 
         if results.get('objects'):
@@ -145,11 +145,11 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
                 
                 contact_str = json.dumps(contact).lower()
                 
-                if "singapore" in contact_str or " sg" in contact_str:
+                if any(word in contact_str for word in ["singapore", " sg"]):
                     final_country = "SG"
                     final_city = "Singapore"
                     break
-                if "london" in contact_str or " united kingdom" in contact_str:
+                if any(word in contact_str for word in ["london", " united kingdom"]):
                     final_country = "GB"
                     final_city = "London"
                     break
@@ -157,12 +157,12 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
                 address = contact.get('address', [])
                 if not address: continue
                 full_addr_text = " ".join([a.get('value', '').lower() for a in address])
-                if "singapore" in full_addr_text or " sg" in full_addr_text:
+                if any(word in full_addr_text for word in ["singapore", " sg"]):
                     final_country = "SG"
                     final_city = "Singapore"
                     break
 
-        is_hosting = is_hosting_suggested or any(word in asn_lower for word in hosting_keywords)
+        is_hosting = is_hosting_suggested or any(word in asn_lower for word in HOSTING_KEYWORDS)
         
         rdns = ""
         try:
@@ -172,37 +172,31 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
             pass
 
         is_vpn = (
-            any(word in asn_lower for word in vpn_keywords) or 
-            "datapacket" in asn_lower or 
-            "datapacket" in host_domain or
-            "datapacket" in rdns or
-            "unn-" in rdns or
-            "datacamp" in rdns or
-            "vpn" in rdns or
-            "vpn" in asn_lower
+            any(word in asn_lower for word in VPN_KEYWORDS) or 
+            any(word in host_domain for word in ["vpn", "proxy"] + VPN_KEYWORDS) or
+            any(word in rdns for word in ["vpn", "proxy", "unn-", "exit-node"] + VPN_KEYWORDS)
         )
         is_hosting = (
-            is_hosting_suggested or 
-            any(word in asn_lower for word in hosting_keywords) or
-            "hosted-by" in rdns or
-            "datacenter" in rdns or
-            "server" in rdns
+            is_hosting or 
+            any(word in rdns for word in HOSTING_KEYWORDS + RDNS_PROXY_INDICATORS)
         )
-        is_tor = any(word in asn_lower for word in tor_keywords)
-        is_crawler = any(word in asn_lower for word in crawler_keywords)
+        is_tor = any(word in asn_lower or word in rdns for word in ["tor-exit", "tor exit", "onion", "torproject"])
+        is_crawler = any(word in asn_lower or word in rdns for word in CRAWLER_KEYWORDS)
         
         isp_name = asn_desc
         org_name = asn_desc
         
         if is_hosting:
             conn_type = "hosting"
-            found_hosting = next((word.capitalize() for word in hosting_keywords if word in asn_lower), None)
+            found_hosting = next((word.capitalize() for word in HOSTING_KEYWORDS if word in asn_lower), None)
             if found_hosting: isp_name = found_hosting
         elif is_vpn:
             conn_type = "vpn"
+        elif is_mobile:
+            conn_type = "mobile"
         else:
             conn_type = "residential"
-            found_isp = next((word.capitalize() for word in isp_keywords if word in asn_lower), None)
+            found_isp = next((word.capitalize() for word in ["comcast", "at&t", "verizon", "t-mobile"] if word in asn_lower), None)
             if found_isp: isp_name = found_isp
 
         prefix = None
@@ -237,7 +231,8 @@ async def fetch_live_data(ip_address: str) -> IPResponse:
                 is_tor=is_tor,
                 is_crawler=is_crawler,
                 is_proxy=is_hosting, 
-                threat_level="medium" if (is_vpn or is_tor or is_hosting) else "low"
+                is_mobile=is_mobile,
+                threat_level="high" if (is_tor or is_vpn) else "medium" if is_hosting else "low"
             )
         )
 

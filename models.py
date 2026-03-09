@@ -13,6 +13,14 @@ class ConnectionInfo(BaseModel):
     type: Optional[str] = "residential"
     domain: Optional[str] = None
 
+class SecurityInfo(BaseModel):
+    is_vpn: bool = False
+    is_tor: bool = False
+    is_crawler: bool = False
+    is_proxy: bool = False
+    is_mobile: bool = False
+    threat_level: str = "low"
+
 class TimezoneInfo(BaseModel):
     id: str
     abbr: str
@@ -39,5 +47,6 @@ class IPResponse(BaseModel):
     borders: Optional[str] = None
     flag: Optional[FlagInfo] = None
     connection: Optional[ConnectionInfo] = None
+    security: Optional[SecurityInfo] = None
     timezone: Optional[TimezoneInfo] = None
     last_updated: Optional[str] = None
