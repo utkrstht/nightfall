@@ -206,10 +206,11 @@ async def fetch_live_data(ip_address: str, hints: Optional[Dict[str, str]] = Non
             any(word in host_domain for word in ["vpn", "proxy"] + VPN_KEYWORDS) or
             any(word in rdns for word in ["vpn", "proxy", "unn-", "exit-node", "tunnel", "vps-", "node-", "relay-"] + VPN_KEYWORDS)
         )
-        is_hosting = (
-            is_hosting or 
-            any(word in rdns for word in HOSTING_KEYWORDS + RDNS_PROXY_INDICATORS + ["server-", "pool-", "static-"])
-        )
+
+        if not is_vpn and (is_hosting or is_hosting_suggested):
+            if any(word in asn_lower or word in host_domain or word in rdns for word in VPN_KEYWORDS):
+                is_vpn = True
+
         is_tor = any(word in asn_lower or word in rdns for word in ["tor-exit", "tor exit", "onion", "torproject"])
         is_crawler = any(word in asn_lower or word in rdns for word in CRAWLER_KEYWORDS)
         
@@ -228,12 +229,15 @@ async def fetch_live_data(ip_address: str, hints: Optional[Dict[str, str]] = Non
         isp_name = asn_desc
         org_name = asn_desc
         
+        
         if is_hosting:
             conn_type = "hosting"
+            is_vpn = True
             found_hosting = next((word.capitalize() for word in HOSTING_KEYWORDS if word in asn_lower), None)
             if found_hosting: isp_name = found_hosting
         elif is_vpn:
             conn_type = "vpn"
+            is_hosting = True 
         elif is_mobile:
             conn_type = "mobile"
         else:
@@ -251,7 +255,6 @@ async def fetch_live_data(ip_address: str, hints: Optional[Dict[str, str]] = Non
         except:
             pass
 
-        # Final Trust Score calculation (weighted factors)
         raw_trust = get_asn_trust_score(asn_clean or 0, is_vpn, is_hosting)
         if is_tor: raw_trust += 30
         if is_discrepancy: raw_trust += 15
@@ -277,10 +280,10 @@ async def fetch_live_data(ip_address: str, hints: Optional[Dict[str, str]] = Non
                 type=conn_type
             ),
             security=SecurityInfo(
-                is_vpn=is_vpn,
-                is_proxy=is_hosting,
+                is_vpn=is_hosting,
+                #is_proxy=is_hosting,
                 is_tor=is_tor,
-                is_hosting=is_hosting,
+                #is_hosting=is_hosting,
                 is_mobile=is_mobile,
                 is_crawler=is_crawler,
                 is_bogon=False,

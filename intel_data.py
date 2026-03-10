@@ -65,4 +65,3 @@ RDNS_PROXY_INDICATORS = [
     "dsl", "cable", "fiber", "ftth", "fttp", "fttc", "nodes", "bridges", "gateways", "outbound", "inbound", 
     "traffic", "filter", "scrubbing", "anti-ddos", "cdn", "edge-node", "cache", "pop"
 ]
-

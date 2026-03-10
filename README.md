@@ -3,10 +3,6 @@ an IP whois service
 
 (ipv6 is supported as well!)
 
-> [!NOTE]
-> alot of the time, instead of triggering `is_vpn`, <br>
-> it'll trigger `is_proxy`, i'll fix this later lol
-
 ## how to use
 i don't have it deployed right now, i'll probably have it running soon
 
@@ -43,14 +39,15 @@ we crawl the whois registry, and about every 11-ish days we get a fresh dataset 
 unless you fetch an IP that is not in our database, you'll get the one in the database (max 11 days old data)
 
 ## what information do i get
-endpoints: /v1/ip/<ip>, 
-           /v1/bulk?ips=<ip1>,<ip2> (500 max)
-           /v1/asn/<asn>
+endpoints: - /v1/ip/<ip>, <br>
+           - /v1/bulk?ips=<ip1>,<ip2> (500 max) <br>
+           - /v1/asn/<asn> <br>
 
 quick rundown on some important fields:
 - is_bogon: means ip provided is a loopback/localhost ip
 - is_discrepancy: means the ip's country didn't match user's language headers
 - latitude/longitude: these are the city latitude and longitudes lol, i'll make it more accurate later i guess.
+- threat_score: how likely is it to be a VPN (the logic is screwed up and all so like ignore this), higher = more vpn (this does NOT mean malicious activity)
 
 you'll get the following information in the following format
 (null information means it's not been processed yet):
@@ -58,57 +55,55 @@ you'll get the following information in the following format
 /v1/ip
 ```
 {
-  "ip": "8.8.8.8",
+  "ip": "205.147.17.22",
   "success": true,
   "type": "IPv4",
-  "prefix": "8.8.8.0/24",
-  "continent": "North America",
-  "continent_code": "NA",
-  "country": "United States",
-  "country_code": "US",
-  "region": "California",
-  "city": "Mountain View",
-  "latitude": 37.751,
-  "longitude": -97.822,
-  "postal": "94043",
-  "calling_code": "+1",
-  "capital": "Washington, D.C.",
-  "borders": "CAN,MEX",
+  "prefix": "205.147.17.0/24",
+  "continent": "Europe",
+  "continent_code": "EU",
+  "country": "Norway",
+  "country_code": "NO",
+  "region": null,
+  "city": "Oslo",
+  "latitude": 59.9056,
+  "longitude": 10.7494,
+  "postal": null,
+  "calling_code": "+47",
+  "capital": "Oslo",
+  "borders": "FIN,SWE,RUS",
   "flag": {
-    "img": "https://cdn.ipwhois.io/flags/us.svg",
-    "emoji": "🇺🇸",
-    "emoji_unicode": "U+1F1FA U+1F1F8"
+    "img": "https://cdn.ipwhois.io/flags/no.svg",
+    "emoji": "🇳🇴",
+    "emoji_unicode": "U+1F1F3 U+1F1F4"
   },
   "connection": {
-    "asn": 15169,
-    "org": "GOOGLE - Google LLC, US",
-    "isp": "Google",
-    "type": "hosting",
-    "domain": "dns.google",
+    "asn": 208172,
+    "org": "PV-HOSTED, CH",
+    "isp": "PV-HOSTED, CH",
+    "type": "residential",
+    "domain": null,
     "abuse_email": null
   },
   "security": {
-    "is_vpn": false,
+    "is_vpn": true,
     "is_tor": false,
     "is_crawler": false,
-    "is_proxy": true,
     "is_mobile": false,
-    "is_hosting": false,
     "is_bogon": false,
-    "is_discrepancy": false,
-    "threat_score": 0,
-    "threat_level": "medium",
-    "abuse_email": null,
+    "is_discrepancy": true,
+    "threat_score": 100,
+    "threat_level": "high",
+    "abuse_email": "abuse.importer974@passmail.net",
     "fingerprint": null
   },
   "timezone": {
-    "id": "America/New_York",
-    "abbr": "EDT",
-    "is_dst": true,
-    "offset": -14400,
-    "utc": "-0400"
+    "id": "Europe/Oslo",
+    "abbr": "CET",
+    "is_dst": false,
+    "offset": 3600,
+    "utc": "+0100"
   },
-  "last_updated": "2026-03-08T12:52:10.182728+00:00"
+  "last_updated": "2026-03-10T11:49:05.357276+00:00"
 }
 ```
 /v1/bulk?ips=8.8.8.8,1.1.1.1

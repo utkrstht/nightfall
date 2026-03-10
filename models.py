@@ -18,9 +18,9 @@ class SecurityInfo(BaseModel):
     is_vpn: bool = False
     is_tor: bool = False
     is_crawler: bool = False
-    is_proxy: bool = False
+    #is_proxy: bool = False
     is_mobile: bool = False
-    is_hosting: bool = False
+    #is_hosting: bool = False  Commented out, as hosting/proxy are now considered VPNs
     is_bogon: bool = False
     is_discrepancy: bool = False
     threat_score: int = 0
