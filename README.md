@@ -4,7 +4,7 @@ an IP whois service
 (ipv6 is supported as well!)
 
 ## how to use
-i don't have it deployed right now, i'll probably have it running soon
+running at `krstht.hackclub.app`, more info out soon
 
 ## vpn/proxy/tor/crawler detection
 the detection is decently accurate, ~75% accurate (i pulled this number out of my ass lol)
